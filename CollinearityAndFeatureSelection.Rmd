@@ -1,8 +1,8 @@
 ---
 title: "Collinearity"
-output:
-  html_document:
-    df_print: paged
+author: Kyriakos Chatzidimitriou
+date: March 20, 2019
+output: md_document
 ---
 
 # Intro
@@ -36,7 +36,7 @@ normData <- cbind(data[,1], as.data.frame(lapply(data[,-1], normalize)))
 names(normData) <- c("mpg", "cylinders", "displacement", "horsepower", "weight", "acceleration", "model_year", "origin")
 
 # check correlation
-cat("Before:", cor(data$displacement, data$weight), "\n")
+cat("Before:", cor(data$V3, data$V5), "\n")
 cat("After norm.:", cor(normData$displacement, normData$weight))
 
 # Train/Test split
