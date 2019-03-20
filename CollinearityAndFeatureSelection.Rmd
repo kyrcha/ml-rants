@@ -1,0 +1,123 @@
+---
+title: "Collinearity"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Intro
+
+This notebook is an online appendix of my blog post on Collinearity and Feature Selection, where I play with the concepts using R code.
+
+# The dataset
+
+We will use the [auto-mpg dataset](https://archive.ics.uci.edu/ml/datasets/auto+mpg), where we will try to predict the miles per galon (mpg) consumption given some car related features like horsepower, weight etc.
+
+```{R}
+fileURL <- "https://archive.ics.uci.edu/ml/machine-learning-databases/auto-mpg/auto-mpg.data"
+download.file(fileURL, destfile="auto-mpg.data", method="curl")
+data <- read.table("auto-mpg.data", na.strings = "?", quote='"', dec=".", header=F)
+# remove instances with missing values and the name of the car
+data <- data[complete.cases(data),-9]
+summary(data)
+```
+
+# Preprocessing
+
+Let's also normalize the dataset (values to be in the interval [0,1]), an operation that will maintain the correllation between the variables, and split between training and testing.
+
+```{R}
+normalize <- function(x) {
+  (x - min(x, na.rm=TRUE))/(max(x,na.rm=TRUE) - min(x, na.rm=TRUE))
+}
+normData <- cbind(data[,1], as.data.frame(lapply(data[,-1], normalize)))
+
+# name variables
+names(normData) <- c("mpg", "cylinders", "displacement", "horsepower", "weight", "acceleration", "model_year", "origin")
+
+# check correlation
+cat("Before:", cor(data$displacement, data$weight), "\n")
+cat("After norm.:", cor(normData$displacement, normData$weight))
+
+# Train/Test split
+library(tidyverse)
+library(caret)
+training.samples <- normData$mpg %>%
+createDataPartition(p = 0.8, list = FALSE)
+train.data  <- normData[training.samples, ]
+test.data <- normData[-training.samples, ]
+```
+
+# Modelling
+
+## Linear Regression
+
+Aka Ordinary Linear Regression:
+
+```{r}
+linearModel <- lm(mpg ~., data = train.data)
+summary(linearModel)
+```
+
+One can see that weight is a very important factor both in terms of the coefficient value and in terms of statistical significance (unlikely to observe a relationship due to change). Notice the negative coefficient (more weight, less miles per gallong), which can be explained by the laws of physics. But also notice that even though weight and diplacement have a correlation o 0.93 (almost collinear), the have different signs in the coefficients, but based on physics they should have had the same signs. Thus collinearity is bad when you try and explain the outputs of models. Let's examine the VIF values:
+
+```{r}
+library(car)
+vif(linearModel)
+```
+
+We observe that 3 predictors have a value more than 10 that is a concern for the existence of collinearity (or multicollinearity in this case). So let's drop displacement, create a second model 
+
+```{r}
+linearModelMinusDisp <- lm(mpg ~.-displacement, data = train.data)
+summary(linearModelMinusDisp)
+vif(linearModelMinusDisp)
+```
+
+and let's check the predictive ability of the two:
+
+```{r}
+predLM <- linearModel %>% predict(test.data)
+predLMMD <- linearModelMinusDisp %>% predict(test.data)
+
+cat("Full model:", RMSE(predLM, test.data$mpg), "\n")
+cat("Minus disp. model:", RMSE(predLMMD, test.data$mpg))
+```
+
+As one can see I now have a more "understandable" model, with a "worse" predictive ability (slightly higher error).
+
+# Feature Selection
+
+4. Redo the same after doing forward elimination
+http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/154-stepwise-regression-essentials-in-r/
+
+# Ridge Regression
+
+One solution to the collinearity problem is to apply Ridge Regression and try to "constrain" the number of solution to the `beta` coefficients. In this case since we have a hyperparameter lambda to optimize, we will apply 10-fold cross-validation on the training set to find the lambda parameters and then use that to train the model and predict mpg in the testing dataset.
+
+```{r}
+library(glmnet)
+y <- train.data$mpg
+x <- train.data %>% select(-starts_with("mpg")) %>% data.matrix()
+lambdas <- 10^seq(3, -2, by = -.1)
+fit <- glmnet(x, y, alpha = 0, lambda = lambdas)
+summary(fit)
+cv_fit <- cv.glmnet(x, y, alpha = 0, lambda = lambdas, nfolds = 10)
+plot(cv_fit)
+opt_lambda <- cv_fit$lambda.min
+x_test <- test.data %>% select(-starts_with("mpg")) %>% data.matrix()
+y_predicted <- predict(fit, s = opt_lambda, newx = x_test)
+cat("Ridge RMSE:", RMSE(y_predicted, test.data$mpg))
+```
+
+and as for the coefficients:
+
+```{r}
+coef(cv_fit)
+```
+
+which as we can see gave a much more reasonable and physically explainable model. The more cyclinders, displacement, horsepower, weight and accellaration...the more gas you have to spend, while the more recent the model, which originated from origin 2 (Europe) or 3 (Japan) the more miles on the gallon you can go. As for the RMSE, not the best, but better than the full model.
+
+# Discussion
+
+Collinearity is important if you need to have an understandable model. If you don't, and you just care for predictive ability you can be more brute and care about the numbers.
