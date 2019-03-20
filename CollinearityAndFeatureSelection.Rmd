@@ -1,8 +1,7 @@
 ---
 title: "Collinearity"
-author: Kyriakos Chatzidimitriou
-date: March 20, 2019
-output: md_document
+author: "Kyriakos Chatzidimitriou"
+date: "March 20, 2019"
 ---
 
 # Intro
