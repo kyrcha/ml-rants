@@ -1,18 +1,21 @@
 ---
-title: "Collinearity"
+title: "Collinearity and Feature Selection"
 author: "Kyriakos Chatzidimitriou"
-date: "March 20, 2019"
+date: "`r Sys.Date()`"
 ---
 
-# Intro
+# Rmd document for Collinearity and Feature Selection
 
-This notebook is an online appendix of my blog post on Collinearity and Feature Selection, where I play with the concepts using R code.
+## Intro
 
-# The dataset
+This notebook is an online appendix of my blog post: [On Collinearity and Feature Selection](http://kyrcha.info/2019/03/22/on-collinearity-and-feature-selection), where I play with the concepts using R code.
+
+## The dataset
 
 We will use the [auto-mpg dataset](https://archive.ics.uci.edu/ml/datasets/auto+mpg), where we will try to predict the miles per galon (mpg) consumption given some car related features like horsepower, weight etc.
 
 ```{R}
+set.seed(1234)
 fileURL <- "https://archive.ics.uci.edu/ml/machine-learning-databases/auto-mpg/auto-mpg.data"
 download.file(fileURL, destfile="auto-mpg.data", method="curl")
 data <- read.table("auto-mpg.data", na.strings = "?", quote='"', dec=".", header=F)
@@ -21,9 +24,9 @@ data <- data[complete.cases(data),-9]
 summary(data)
 ```
 
-# Preprocessing
+## Preprocessing
 
-Let's also normalize the dataset (values to be in the interval [0,1]), an operation that will maintain the correllation between the variables, and split between training and testing.
+Let's normalize the dataset (values to be in the interval [0,1]), an operation that will maintain the correllation between the variables, and split between training and testing.
 
 ```{R}
 normalize <- function(x) {
@@ -35,7 +38,7 @@ normData <- cbind(data[,1], as.data.frame(lapply(data[,-1], normalize)))
 names(normData) <- c("mpg", "cylinders", "displacement", "horsepower", "weight", "acceleration", "model_year", "origin")
 
 # check correlation
-cat("Before:", cor(data$V3, data$V5), "\n")
+cat("Cor between disp. and weight before norm.:", cor(data$V3, data$V5), "\n")
 cat("After norm.:", cor(normData$displacement, normData$weight))
 
 # Train/Test split
@@ -47,25 +50,23 @@ train.data  <- normData[training.samples, ]
 test.data <- normData[-training.samples, ]
 ```
 
-# Modelling
+## Modelling
 
-## Linear Regression
-
-Aka Ordinary Linear Regression:
+### Linear Regression
 
 ```{r}
 linearModel <- lm(mpg ~., data = train.data)
 summary(linearModel)
 ```
 
-One can see that weight is a very important factor both in terms of the coefficient value and in terms of statistical significance (unlikely to observe a relationship due to change). Notice the negative coefficient (more weight, less miles per gallong), which can be explained by the laws of physics. But also notice that even though weight and diplacement have a correlation o 0.93 (almost collinear), the have different signs in the coefficients, but based on physics they should have had the same signs. Thus collinearity is bad when you try and explain the outputs of models. Let's examine the VIF values:
+One can see that weight is a very important factor both in terms of the coefficient value and in terms of statistical significance (unlikely to observe a relationship between weight and mpg due to change). Notice the negative coefficient (more weight, less miles per gallon), which can be explained by the laws of physics. But also notice that even though weight and diplacement have a correlation o 0.93 (almost collinear), their coefficients have different signs. Based on common knowledge though they should have had the same signs. Collinearity is bad when you try and explain the outputs of models. Let's examine the VIF values:
 
 ```{r}
 library(car)
 vif(linearModel)
 ```
 
-We observe that 3 predictors have a value more than 10 that is a concern for the existence of collinearity (or multicollinearity in this case). So let's drop displacement, create a second model 
+We observe that 3 predictors have a value more than 10 that is a concern for the existence of collinearity (or multicollinearity in this case). So let's drop displacement and create a second model:
 
 ```{r}
 linearModelMinusDisp <- lm(mpg ~.-displacement, data = train.data)
@@ -83,40 +84,93 @@ cat("Full model:", RMSE(predLM, test.data$mpg), "\n")
 cat("Minus disp. model:", RMSE(predLMMD, test.data$mpg))
 ```
 
-As one can see I now have a more "understandable" model, with a "worse" predictive ability (slightly higher error).
+As one can see I now have a more "understandable" model, with kind of a "worse" predictive ability (slightly higher error).
 
-# Feature Selection
+Now let's remove all the variables that had a VIF value of more than 10
 
-4. Redo the same after doing forward elimination
-http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/154-stepwise-regression-essentials-in-r/
+```{R}
+linearModelSimpler <- lm(mpg ~.-displacement-cylinders-weight, data = train.data)
+summary(linearModelSimpler)
+vif(linearModelSimpler)
+predLMS <- linearModelSimpler %>% predict(test.data)
+cat("Even simpler model - RMSE:", RMSE(predLMS, test.data$mpg), "\n")
+```
 
-# Ridge Regression
+Now the model is simple, more explainable, without any colinearities (low VIF values) but not as good in terms of RMSE as the previous ones.
 
-One solution to the collinearity problem is to apply Ridge Regression and try to "constrain" the number of solution to the `beta` coefficients. In this case since we have a hyperparameter lambda to optimize, we will apply 10-fold cross-validation on the training set to find the lambda parameters and then use that to train the model and predict mpg in the testing dataset.
+## Feature Selection
+
+To check also a feature selection method, stepwise feature selection using the Akaike Information Criterion (AIC):
+
+```{r}
+require(leaps)
+require(MASS)
+step.model <- stepAIC(linearModel, direction = "both", trace = FALSE)
+summary(step.model)
+linearModelAIC <- lm(as.formula(step.model), data = train.data)
+vif(linearModelAIC)
+predLMAIC <- linearModelAIC %>% predict(test.data)
+cat("AIC model:", RMSE(predLMAIC, test.data$mpg), "\n")
+```
+
+Through this example we can see than even though we have colinearities involved (VIF value of 10+), we obtain a low RMSE of 3.11. Or using another feature selection package:
+
+```{r}
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model2 <- train(mpg ~., data = train.data,
+                    method = "leapBackward", 
+                    tuneGrid = data.frame(nvmax = 1:7),
+                    trControl = train.control
+                    )
+step.model2$results
+```
+
+```{r}
+summary(step.model2$finalModel)
+coef(step.model2$finalModel, 3)
+```
+
+The best model has 3 predictors: `weight`, `model_year` and `origin`. So making one more final linear regression model and predicting the `mpg` in the test set we have:
+
+```{r}
+linearModelBest <- lm(mpg ~weight+model_year+origin, data = train.data)
+summary(linearModelBest)
+vif(linearModelBest)
+predLMBest <- linearModelBest %>% predict(test.data)
+cat("Best model:", RMSE(predLMBest, test.data$mpg), "\n")
+```
+
+*3.09*!!! Lowest error, with only 3 predictors and no collinearities involved. In this case feature selection went along with a fina model that is interpretable as well.
+
+## Ridge Regression
+
+One solution to the collinearity problem (without doing any feature selection) is to apply Ridge Regression and to try to "constrain" the number of solution of the `beta` coefficients into a single solution. In this case since we have the hyperparameter lambda to optimize for which we will apply 10-fold cross-validation on the training set to find the best value and then use that to train the model and predict mpg in the testing dataset.
 
 ```{r}
 library(glmnet)
 y <- train.data$mpg
-x <- train.data %>% select(-starts_with("mpg")) %>% data.matrix()
+x <- train.data %>% dplyr::select(-starts_with("mpg")) %>% data.matrix()
 lambdas <- 10^seq(3, -2, by = -.1)
 fit <- glmnet(x, y, alpha = 0, lambda = lambdas)
-summary(fit)
 cv_fit <- cv.glmnet(x, y, alpha = 0, lambda = lambdas, nfolds = 10)
-plot(cv_fit)
+# uncomment the plot to see how lambda changes the error.
+#plot(cv_fit)
 opt_lambda <- cv_fit$lambda.min
-x_test <- test.data %>% select(-starts_with("mpg")) %>% data.matrix()
+x_test <- test.data %>% dplyr::select(-starts_with("mpg")) %>% data.matrix()
 y_predicted <- predict(fit, s = opt_lambda, newx = x_test)
 cat("Ridge RMSE:", RMSE(y_predicted, test.data$mpg))
 ```
 
-and as for the coefficients:
+The Ridge Regression produced one of the lowest error and without dropping any of the coefficients. And as for the coefficients' values:
 
 ```{r}
 coef(cv_fit)
 ```
 
-which as we can see gave a much more reasonable and physically explainable model. The more cyclinders, displacement, horsepower, weight and accellaration...the more gas you have to spend, while the more recent the model, which originated from origin 2 (Europe) or 3 (Japan) the more miles on the gallon you can go. As for the RMSE, not the best, but better than the full model.
+which as we can see gave a much more reasonable and physically explainable model. The more cyclinders, displacement, horsepower, weight and accellaration...the less miles per gallon you can drive, while the more recent the model, which originated from origin 2 (Europe) or 3 (Japan) the more miles on the gallon you can go. As for the RMSE, it is close both to the full model and to the optimized model using feature selection.
 
-# Discussion
+## Discussion
 
 Collinearity is important if you need to have an understandable model. If you don't, and you just care for predictive ability you can be more brute and care about the numbers.
