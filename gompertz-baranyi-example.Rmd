@@ -1,0 +1,122 @@
+---
+title: Fitting modified Gompertz and Baranyi equations for bacterial growth
+author: Kyriakos Chatzidimitriou
+date: October 25th, 2019
+output:
+  md_document:
+    variant: markdown_github
+  html_document:
+    df_print: paged
+---
+
+In this notebook we will fit and checkout two of the most famous equations for bacterial growth, _modified Gompertz_ and _Baranyi_. The equations and the data will be based on the book of _Kellar and Lu, 2004_: [Modeling microbial responses in food](https://www.crcpress.com/Modeling-Microbial-Responses-in-Food/author/p/book/9780367394653). The equations are:
+
+**Modified Gompertz**, equation (2.2) from the book: 
+
+$$log(x_t) = A + C \cdot e^{-e^{(-B \cdot (t - M))}}$$
+
+where $x_t$ is the number of cells at time $t$, $A$ the asymptotic count, $C$ the difference in value of the upper and lower asymptote, $B$ the relative growth rate at $M$, and $M$ the time at which the absolute growth rate is maximum.
+
+**Baranyi**, equations (2.9) and (2.10) from the book:
+
+$$y(t) = y_0 + \mu_{max} \cdot A(t) - ln(1 + \frac{e^{\mu_{max} \cdot A(t)} - 1}{e^{y_{max}-y_0}})$$
+
+and
+
+$$A(t) = t + \frac{1}{\mu_{max}} \cdot ln(e^{-\mu_{max} \cdot t} + e^{-\mu_{max} \cdot \lambda} - e^{[-\mu_{max} \cdot (t + \lambda)]})$$
+
+where $y(t) = ln x(t)$, $y_0 = ln x_0$, $\mu_{max}$ the Gompertz rate assumed to be equal to the rate of increase of the limiting substrate. _Note: the equation for $A_t$ is derived after substituting $q_0$ with $\frac{1}{e^{\mu_{max}} -1}$_.
+
+Some data from the book for Listeria monocytogenes at 5 degrees Celsius are:
+
+```{r}
+# time in days
+d = c(0, 6, 24, 30, 48, 54, 72, 78, 99, 126, 144, 150, 168, 174, 191, 198, 216, 239, 266, 291, 316, 336, 342, 360, 384)
+# log cfu ml^-1
+y = c(4.8, 4.7, 4.7, 4.7, 4.9, 5.1, 5.3, 5.4, 5.9, 6.3, 6.9, 6.9, 7.2, 7.3, 7.7, 7.8, 8.3, 8.8, 9.1, 9.2, 9.3, 9.7, 9.7, 9.7, 9.5)
+```
+
+## Modified Gompertz
+
+Let's start with the mod-Gompertz.
+
+```{r}
+gombertz_mod = function(params, x) {
+  params[1] + (params[3] * exp(-exp(-params[2] * (x - params[4]))))
+}
+```
+
+Next I fit the model using Nonlinear least squares:
+
+```{r}
+fitmodel <- nls(y ~ A + C * exp(-exp(-B * (d - M))), start=list(A=3, B=0.01, C=10, M=10))
+```
+
+Extract the parameters and apply the model to new data
+
+```{r}
+gomb_params=coef(fitmodel)
+print(gomb_params)
+d2 <- 0:400
+y2 <- gombertz_mod(gomb_params, d2)
+y_pred_gomb <- gombertz_mod(gomb_params, d)
+```
+
+Let's plot the equations and teh data points:
+
+```{r}
+plot(d2, y2, type="l", xlab="time (days)", ylab="logx", main="Growth for Listeria monocytogenes (Gompertz)")
+points(d, y)
+```
+
+and calculate the RMSE:
+
+```{r}
+rmse <- function(real, pred) {
+  sqrt(mean((real-pred)^2))
+}
+
+paste("RMSE modified Gombertz: ", rmse(y, y_pred_gomb))
+
+```
+
+## Baranyi
+
+For the Baranyi we have the following functions.
+
+```{r}
+fitmodel <- nls(y ~ y0 + mmax * (d + (1/mmax) * log(exp(-mmax*d) + 
+                exp(-mmax * lambda) - exp(-mmax * (d + lambda)))) - 
+                log(1 + ((exp(mmax * (d + (1/mmax) * log(exp(-mmax*d) +
+                exp(-mmax * lambda) - exp(-mmax * 
+                (d + lambda)))))-1)/(exp(ymax-y0)))),
+                start=list(y0=2.5, mmax=0.1, lambda=10, ymax=10))
+```
+
+```{r}
+baranyi <- function(params, x) {
+  params[1] + params[2] * (x + (1/params[2]) * log(exp(-params[2]*x) + 
+  exp(-params[2] * params[3]) - exp(-params[2] * (x + params[3])))) - 
+  log(1 + ((exp(params[2] * (x + (1/params[2]) * log(exp(-params[2]*x) + 
+  exp(-params[2] * params[3]) - exp(-params[2] * (x + params[3])))))-1)/
+    (exp(params[4]-params[1]))))
+}
+
+baranyi_params <- coef(fitmodel)
+print(baranyi_params)
+d3 <- 0:400
+y3 <- baranyi(baranyi_params, d3)
+y_pred_baranyi <- baranyi(baranyi_params, d)
+```
+
+```{r}
+plot(d3, y3, type="l", xlab="time (days)", ylab="logN", main="Growth for Listeria monocytogenes (Baranyi)")
+points(d, y)
+```
+
+```{r}
+paste("RMSE Baranyi: ", rmse(y, y_pred_baranyi))
+```
+
+As expected from the bibliography, the Baranyi equations have a smaller error, basically due to the better fit in the steady state of the bacterial growth.
+
